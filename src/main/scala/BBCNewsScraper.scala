@@ -1,7 +1,7 @@
 
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
-import play.api.libs.json.Json.JsValueWrapper
+import play.api.libs.json.Json.{JsValueWrapper, parse}
 import play.api.libs.json._
 
 import scala.io.Source
@@ -12,22 +12,17 @@ object BBCNewsScraper {
   def main(args: Array[String]): Unit = {
     val worldNewsUrl = "https://feeds.bbci.co.uk/news/world/rss.xml"
     val topNewsUrl = "https://feeds.bbci.co.uk/news/rss.xml"
-
     val allNewsLinks = scrapeAllNewsLinks(worldNewsUrl, topNewsUrl)
-
-    // Scrape information for each news link
     val newsPageInfoSet = allNewsLinks.map(scrapeNewsPageInfo)
-
-    // Convert to JSON array
     val jsonArray = toJsonArray(newsPageInfoSet)
+
     println(s"\nJSON Array:\n$jsonArray")
 
-    // Return the number of entries in the JSON array
     val numEntries = jsonArray.value.size
     println(s"\nNumber of entries in the JSON array: $numEntries")
   }
 
-  private case class NewsPageInfo(quelle: String, title: String, text: String, category: String, publishingDate: String)
+  private case class NewsPageInfo(quelle: String, title: String, text: String, category: String, date: String, url:String)
 
   private def scrapeAllNewsLinks(worldNewsUrl: String, topNewsUrl: String): Set[String] = {
     val worldNewsLinks = scrapeNewsLinks(worldNewsUrl)
@@ -39,21 +34,13 @@ object BBCNewsScraper {
 
   private def scrapeNewsLinks(url: String): Set[String] = {
     Using.resource(Source.fromURL(url)) { source =>
-      // Read the XML data from the URL
       val xmlString = source.mkString
-
-      // Parse the XML
       val xml: Elem = XML.loadString(xmlString)
-
-      // Extract news links
       val newsLinks = (xml \ "channel" \ "item" \ "link").map(_.text).toSet
-
-      // Return the set of news links
       newsLinks
     }
   }
 
-  // Custom implicit Releasable instance for Jsoup's Document
   implicit val jsoupDocumentReleasable: Using.Releasable[Document] = (_: Document) => ()
 
   private def scrapeNewsPageInfo(newsLink: String): NewsPageInfo = {
@@ -62,13 +49,14 @@ object BBCNewsScraper {
       val title = document.select("h1").text()
       val text = document.select("article").text()
       val category = document.select("meta[property=article:section]").attr("content")
-      val timestamp = document.select("time[datetime]").attr("datetime")
+      val date = document.select("time[datetime]").attr("datetime")
+      val url = newsLink
 
-      NewsPageInfo(quelle,title, text, category, timestamp)
+      NewsPageInfo(quelle,title, text, category, date, url)
     }
   }
 
-  private def toJsonArray(newsPageInfoSet: Set[NewsPageInfo]): JsArray = {
+ def toJsonArray(newsPageInfoSet: Set[NewsPageInfo]): JsArray = {
     val jsonArray: JsArray = if (newsPageInfoSet.nonEmpty) {
       Json.arr(newsPageInfoSet.toSeq.map { pageInfo =>
         Json.obj(
@@ -76,11 +64,11 @@ object BBCNewsScraper {
           "title" -> Json.toJson(pageInfo.title),
           "text" -> Json.toJson(pageInfo.text),
           "category" -> Json.toJson(pageInfo.category),
-          "timestamp" -> Json.toJson(pageInfo.publishingDate)
+          "timestamp" -> Json.toJson(pageInfo.date),
+          "url" -> Json.toJson(pageInfo.url)
         ): JsValueWrapper
       }: _*)
     } else {
-      // If set is empty, add a default entry
       Json.arr(Json.obj("entry" -> "NoData"))
     }
 
